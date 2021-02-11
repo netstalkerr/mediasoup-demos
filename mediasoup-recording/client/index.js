@@ -28,6 +28,7 @@ const ui = {
   startWebRTC: document.getElementById("uiStartWebRTC"),
   startRecording: document.getElementById("uiStartRecording"),
   stopRecording: document.getElementById("uiStopRecording"),
+  disableCamera: document.getElementById("uiDisableCamera"),
 
   // <video>
   localVideo: document.getElementById("uiLocalVideo"),
@@ -36,6 +37,7 @@ const ui = {
 ui.startWebRTC.onclick = startWebRTC;
 ui.startRecording.onclick = startRecording;
 ui.stopRecording.onclick = stopRecording;
+ui.disableCamera.onclick = disableCamera;
 
 
 // ----------------------------------------------------------------------------
@@ -120,6 +122,10 @@ function startWebRTC() {
   return startMediasoup()
   .then(startWebrtcSend)
   .catch(console.error)
+}
+
+async function disableCamera() {
+  (await ui.localStream.getVideoTracks()).forEach((t) => t.enabled = !t.enabled);
 }
 
 function startMediasoup()
@@ -224,6 +230,7 @@ function whenTransport(useAudio, useVideo, transport)
   })
   .then(function(stream)
   {
+    ui.localStream = stream;
     // Start mediasoup-client's WebRTC producer(s)
 
     const audioTrack = stream.getAudioTracks()[0];

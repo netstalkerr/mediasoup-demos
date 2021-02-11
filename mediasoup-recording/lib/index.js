@@ -18,7 +18,7 @@ module.exports = function(CONFIG)
 
   function send(data)
   {
-    _socket?.send(JSON.stringify(data))
+    _socket?.readyState === 1 && _socket.send(JSON.stringify(data))
   }
 
 
@@ -51,13 +51,13 @@ module.exports = function(CONFIG)
 
     // Accept requests only from a single client
     // TODO fail on HTTP upgrade with 409 CONFLICT or 423 LOCKED
-    if(_jsonRpcClient)
-    {
-      socket.send(JSON.stringify(jsonRpcClient.notification("error",
-        ['Client already connected'])));
+    // if(_jsonRpcClient)
+    // {
+    //   socket.send(JSON.stringify(jsonRpcClient.notification("error",
+    //     ['Client already connected'])));
 
-      return socket.close()
-    }
+    //   return socket.close()
+    // }
 
     socket.addEventListener("close", onClose);
     socket.addEventListener("message", function({data})

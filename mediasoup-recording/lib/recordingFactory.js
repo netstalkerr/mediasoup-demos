@@ -2,6 +2,7 @@ const Process = require("child_process");
 
 const FFmpegStatic = require("ffmpeg-static");
 const {sync: mkdirp} = require('mkdirp');
+const { Readable } = require('stream');
 
 
 async function startRecordingExternal() {
@@ -27,6 +28,11 @@ async function startRecordingExternal() {
   return promise;
 }
 
+// use config and check if port is open and not used currently
+let audioPort = Math.floor(Math.random() * (32256 - 65535 + 1) + 65535);
+let audioPortRtcp = audioPort + 1;
+let videoPort = Math.floor(Math.random() * (32256 - 65535 + 1) + 65535);
+let videoPortRtcp = videoPort + 1;
 
 module.exports = function(router, CONFIG)
 {
@@ -99,6 +105,18 @@ module.exports = function(router, CONFIG)
     let cmdOutputPath = `${__dirname}/../recording/output-ffmpeg-vp8.webm`;
     let cmdCodec = "";
     let cmdFormat = "-f webm -flags +global_header";
+    let sdp = `v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=-
+    c=IN IP4 127.0.0.1
+    t=0 0
+    m=audio ${audioPort} RTP/AVPF 111
+    a=rtcp:${audioPortRtcp}
+    a=rtpmap:111 opus/48000/2
+    a=fmtp:111 minptime=10;useinbandfec=1
+    m=video ${videoPort} RTP/AVPF 96
+    a=rtcp:${videoPortRtcp}
+    a=rtpmap:96 VP8/90000`;
 
     // Ensure correct FFmpeg version is installed
     const ffmpegOut = Process.execSync(cmdProgram + " -version", {
@@ -135,18 +153,33 @@ module.exports = function(router, CONFIG)
         // "-strict experimental" is required to allow storing
         // OPUS audio into MP4 container
         cmdFormat = "-f mp4 -strict experimental";
+
+        sdp = `v=0
+        o=- 0 0 IN IP4 127.0.0.1
+        s=-
+        c=IN IP4 127.0.0.1
+        t=0 0
+        m=audio ${audioPort} RTP/AVPF 111
+        a=rtcp:${audioPortRtcp}
+        a=rtpmap:111 opus/48000/2
+        a=fmtp:111 minptime=10;useinbandfec=1
+        m=video ${videoPort} RTP/AVPF 125
+        a=rtcp:${videoPortRtcp}
+        a=rtpmap:125 H264/90000
+        a=fmtp:125 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f`;    
       }
     }
 
     // Run process
     const cmdArgStr = [
       "-nostdin",
-      "-protocol_whitelist file,rtp,udp",
+      "-protocol_whitelist pipe,rtp,udp",
       // "-loglevel debug",
       // "-analyzeduration 5M",
       // "-probesize 5M",
       "-fflags +genpts",
-      `-i ${cmdInputPath}`,
+      "-f sdp",
+      "-i pipe:0",
       cmdCodec,
       cmdFormat,
       `-y ${cmdOutputPath}`,
@@ -156,7 +189,15 @@ module.exports = function(router, CONFIG)
 
     console.log(`Run command: ${cmdProgram} ${cmdArgStr}`);
 
+    const sdpStream = new Readable();
+    sdpStream._read = () => {};
+    sdpStream.push(sdp);
+    sdpStream.push(null);
+
     recProcess = Process.spawn(cmdProgram, cmdArgStr.split(/\s+/));
+
+    sdpStream.resume();
+    sdpStream.pipe(recProcess.stdin);
 
     recProcess.on("error", (err) => {
       console.error("Recording process error:", err);
@@ -239,6 +280,17 @@ module.exports = function(router, CONFIG)
     let cmdMux = "webmmux";
     let cmdAudioBranch = "";
     let cmdVideoBranch = "";
+    let sdp = `v=0
+    o=- 0 0 IN IP4 127.0.0.1
+    s=-
+    c=IN IP4 127.0.0.1
+    t=0 0
+    m=audio ${audioPort} RTP/AVPF 111
+    a=rtcp:${audioPortRtcp}
+    a=rtpmap:111 opus/48000/2
+    a=fmtp:111 minptime=10;useinbandfec=1
+    m=video ${videoPort} RTP/AVPF 96
+    a=rtcp:${videoPortRtcp}`;
 
     if (useAudio) {
       // prettier-ignore
@@ -252,7 +304,7 @@ module.exports = function(router, CONFIG)
     if (useVideo) {
       if (useH264) {
         cmdInputPath = `${__dirname}/sdp/input-h264.sdp`;
-        cmdOutputPath = `${__dirname}/../recording/output-gstreamer-h264.mp4`;
+        cmdOutputPath = `${__dirname}/../recording/output-gstreamer-h264-${new Date().getTime()}.mp4`;
         cmdMux = `mp4mux faststart=true faststart-file=${cmdOutputPath}.tmp`;
 
         // prettier-ignore
@@ -261,6 +313,20 @@ module.exports = function(router, CONFIG)
           ! rtph264depay \
           ! h264parse \
           ! mux.";
+
+          sdp = `v=0
+          o=- 0 0 IN IP4 127.0.0.1
+          s=-
+          c=IN IP4 127.0.0.1
+          t=0 0
+          m=audio ${audioPort} RTP/AVPF 111
+          a=rtcp:${audioPortRtcp}
+          a=rtpmap:111 opus/48000/2
+          a=fmtp:111 minptime=10;useinbandfec=1
+          m=video ${videoPort} RTP/AVPF 125
+          a=rtcp:${videoPortRtcp}
+          a=rtpmap:125 H264/90000
+          a=fmtp:125 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f`;      
       } else {
         // prettier-ignore
         cmdVideoBranch =
@@ -278,7 +344,7 @@ module.exports = function(router, CONFIG)
     const cmdProgram = "gst-launch-1.0"; // Found through $PATH
     const cmdArgStr = [
       "--eos-on-shutdown",
-      `filesrc location=${cmdInputPath}`,
+      "fdsrc fd=0",
       "! sdpdemux timeout=0 name=demux",
       `${cmdMux} name=mux`,
       `! filesink location=${cmdOutputPath}`,
@@ -292,9 +358,17 @@ module.exports = function(router, CONFIG)
       `Run command: GST_DEBUG=${cmdEnv.GST_DEBUG} ${cmdProgram} ${cmdArgStr}`
     );
 
+    const sdpStream = new Readable();
+    sdpStream._read = () => {};
+    sdpStream.push(sdp);
+    sdpStream.push(null);
+
     recProcess = Process.spawn(cmdProgram, cmdArgStr.split(/\s+/), {
       env: cmdEnv,
     });
+
+    sdpStream.resume();
+    sdpStream.pipe(recProcess.stdin);
 
     recProcess.on("error", (err) => {
       console.error("Recording process error:", err);
@@ -459,11 +533,17 @@ module.exports = function(router, CONFIG)
       const useAudio = audioEnabled();
       const useVideo = videoEnabled();
 
+      // use config and check if port is open and not used currently
+      audioPort = Math.floor(Math.random() * (32256 - 65535 + 1) + 65535);
+      audioPortRtcp = audioPort + 1;
+      videoPort = Math.floor(Math.random() * (32256 - 65535 + 1) + 65535);
+      videoPortRtcp = videoPort + 1;
+
       // Start mediasoup's RTP consumer(s)
       return Promise.all([
         useAudio && createTransportAndConsumer('AUDIO',
-          CONFIG.mediasoup.recording.audioPort,
-          CONFIG.mediasoup.recording.audioPortRtcp,
+          audioPort,
+          audioPortRtcp,
           webrtc_audioProducer.id
         )
         .then(function({rtpConsumer, rtpTransport})
@@ -472,8 +552,8 @@ module.exports = function(router, CONFIG)
           rtp_audioTransport = rtpTransport;
         }),
         useVideo && createTransportAndConsumer('VIDEO',
-          CONFIG.mediasoup.recording.videoPort,
-          CONFIG.mediasoup.recording.videoPortRtcp,
+          videoPort,
+          videoPortRtcp,
           webrtc_videoProducer.id
         )
         .then(function({rtpConsumer, rtpTransport})
