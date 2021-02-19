@@ -98,8 +98,8 @@ module.exports = function(router, CONFIG)
     const useVideo = videoEnabled();
     const useH264  = h264Enabled();
 
-    // const cmdProgram = "ffmpeg"; // Found through $PATH
-    const cmdProgram = FFmpegStatic; // From package "ffmpeg-static"
+    const cmdProgram = "ffmpeg"; // Found through $PATH
+    //const cmdProgram = FFmpegStatic; // From package "ffmpeg-static"
 
     let cmdInputPath = `${__dirname}/sdp/input-vp8.sdp`;
     let cmdOutputPath = `${__dirname}/../recording/output-ffmpeg-vp8.webm`;
@@ -141,7 +141,7 @@ module.exports = function(router, CONFIG)
     }
 
     if (useAudio) {
-      cmdCodec += " -map 0:a:0 -c:a copy";
+      cmdCodec += " -map 0:a:0 -c:a aac";
     }
     if (useVideo) {
       cmdCodec += " -map 0:v:0 -c:v copy";
@@ -189,15 +189,12 @@ module.exports = function(router, CONFIG)
 
     console.log(`Run command: ${cmdProgram} ${cmdArgStr}`);
 
-    const sdpStream = new Readable();
-    sdpStream._read = () => {};
-    sdpStream.push(sdp);
-    sdpStream.push(null);
 
     recProcess = Process.spawn(cmdProgram, cmdArgStr.split(/\s+/));
 
-    sdpStream.resume();
-    sdpStream.pipe(recProcess.stdin);
+    recProcess.stdin.write(sdp);
+    recProcess.stdin.end();
+
 
     recProcess.on("error", (err) => {
       console.error("Recording process error:", err);
@@ -358,17 +355,12 @@ module.exports = function(router, CONFIG)
       `Run command: GST_DEBUG=${cmdEnv.GST_DEBUG} ${cmdProgram} ${cmdArgStr}`
     );
 
-    const sdpStream = new Readable();
-    sdpStream._read = () => {};
-    sdpStream.push(sdp);
-    sdpStream.push(null);
-
     recProcess = Process.spawn(cmdProgram, cmdArgStr.split(/\s+/), {
       env: cmdEnv,
     });
 
-    sdpStream.resume();
-    sdpStream.pipe(recProcess.stdin);
+    recProcess.stdin.write(sdp);
+    recProcess.stdin.end();
 
     recProcess.on("error", (err) => {
       console.error("Recording process error:", err);
